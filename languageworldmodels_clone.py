@@ -861,42 +861,42 @@ class train():
             plt.show()
             self.agent.reset_memory()
 
-"""### 5-3 LBN"""
-def lbn_exp(self):
-    with torch.no_grad():
-        fig, ax = plt.subplots(1,6,figsize=(12,3))
+    """### 5-3 LBN"""
+    def lbn_exp(self):
+        with torch.no_grad():
+            fig, ax = plt.subplots(1,6,figsize=(12,3))
 
-        slot_lst = []
-        beta_lst = []
+            slot_lst = []
+            beta_lst = []
 
-        for i in range(2):
-            self.env.reset()
-            x_part = self.env.observation(partial=True)
-            x_glb = self.env.observation(partial=False)
-            ax[i].imshow(x_glb)
+            for i in range(2):
+                self.env.reset()
+                x_part = self.env.observation(partial=True)
+                x_glb = self.env.observation(partial=False)
+                ax[i].imshow(x_glb)
 
-            x_glb = x_glb.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device) 
-            m = self.agent.speaker(x_glb)
-            m = m.view(1,20)
+                x_glb = x_glb.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device) 
+                m = self.agent.speaker(x_glb)
+                m = m.view(1,20)
 
-            x_part = x_part.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device)
-            _, z_init = self.agent.vae(x_part)
+                x_part = x_part.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device)
+                _, z_init = self.agent.vae(x_part)
 
-            for _ in range(1000):
-                beta = self.agent.lbn(z_init, m, beta=None, t=1).view(-1).detach().cpu().tolist()
-                beta_lst.append(beta)
-                slot_lst.append(i)
-        
-        print('input')
-        plt.show()
+                for _ in range(1000):
+                    beta = self.agent.lbn(z_init, m, beta=None, t=1).view(-1).detach().cpu().tolist()
+                    beta_lst.append(beta)
+                    slot_lst.append(i)
             
-        from sklearn.manifold import TSNE
-        beta_lst = TSNE(n_components=2).fit_transform(beta_lst).T
+            print('input')
+            plt.show()
+                
+            from sklearn.manifold import TSNE
+            beta_lst = TSNE(n_components=2).fit_transform(beta_lst).T
 
-        colors = ['red', 'blue','green','magenta','cyan','yellow']
-        plt.figure(figsize=(8,8))
-        plt.scatter(beta_lst[0], beta_lst[1], s=0.7, c=[colors[t] for t in slot_lst])
-        plt.show()
+            colors = ['red', 'blue','green','magenta','cyan','yellow']
+            plt.figure(figsize=(8,8))
+            plt.scatter(beta_lst[0], beta_lst[1], s=0.7, c=[colors[t] for t in slot_lst])
+            plt.show()
 
 """## 6 重みの読み込み"""
 '''

@@ -27,9 +27,9 @@ import random
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-# %matplotlib inline
+#%matplotlib inline
 # 可視化のためにTensorBoardを用いるので, Colab上でTensorBoardを表示するための宣言を行う
-# %load_ext tensorboard
+#%load_ext tensorboard
 
 # torch.deviceを定義
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -140,11 +140,11 @@ class Environment():
             reward_x = reward_pos % 3
             reward_y = reward_pos % 2
             if reward_y == 0:
-                self.grid[1][reward_x*3+1] = 1
-                #self.grid[1][3] = 1
+                #self.grid[1][reward_x*3+1] = 1
+                self.grid[1][7] = 1
             else:
-                self.grid[-2][reward_x*3+1] = 1
-                #self.grid[-2][3] = 1
+                #self.grid[-2][reward_x*3+1] = 1
+                self.grid[-2][7] = 1
 
         elif self.grid_type=='B':
             # reward cell must be somewhere on one of the corridors
@@ -385,7 +385,7 @@ class VAE_Seq(nn.Module):
 
 # Latent Belief Networkモデルの実装
 class LBN(nn.Module):
-    def __init__(self, T, z_dim, m_dim, beta_dim, n_gaussian):
+    def __init__(self, T, z_dim, m_dim, beta_dim):
         '''
         T : 最大ステップ数
         '''
@@ -394,19 +394,15 @@ class LBN(nn.Module):
         self.z_dim = z_dim
         self.sigma = torch.tensor([0.1])
         # Encoder, (z, m)を入力にガウス分布のパラメータmu, sigmaを出力
-        self.dense_enc1 = nn.Linear(z_dim + m_dim, 200)
-        self.dense_enc2 = nn.Linear(200, 200)
-        self.dense_encmean = nn.Linear(200, beta_dim)
-        self.dense_encvar = nn.Linear(200, beta_dim)
+        self.dense_enc1 = nn.Linear(z_dim + m_dim, 1000)
+        self.dense_enc2 = nn.Linear(1000, 1000)
+        self.dense_encmean = nn.Linear(1000, beta_dim)
+        self.dense_encvar = nn.Linear(1000, beta_dim)
 
         # Decoder, betaを入力に次の時刻のzを出力
-        self.rnn1 = nn.LSTM(input_size = beta_dim,
-                            hidden_size = 256)
-        self.rnn2 = nn.LSTM(input_size = 256,
-                            hidden_size = 256)
-        self.dense_decpi = nn.Linear(256, n_gaussian)
-        self.dense_decmean = nn.Linear(256, n_gaussian * z_dim)
-        self.dense_decvar = nn.Linear(256, n_gaussian * z_dim)
+        self.rnn = nn.LSTM(input_size = beta_dim,
+                            hidden_size = 1000)
+        self.dense_dec = nn.Linear(1000, z_dim)
 
         # loss計算のための記憶
         self.z_memory = []
@@ -417,7 +413,6 @@ class LBN(nn.Module):
         self.m_dim = m_dim
         self.z_dim = z_dim
         self.beta_dim = beta_dim
-        self.n_gaussian = n_gaussian
     
     def _encoder(self, z, m):
         x = torch.cat([z, m], dim=1)
@@ -433,26 +428,10 @@ class LBN(nn.Module):
         return mean + std * epsilon
  
     def _decoder(self, beta):
-        hidden_init_1 = None
-        hidden_init_2 = None
-        output, (hidden, cell) = self.rnn1(beta, hidden_init_1) # hidden_initは隠れ層Hと記憶層Cの初期値、Noneの場合は零行列となる
-        output = F.tanh(output)
-        output, (hidden, cell) = self.rnn2(output, hidden_init_2) 
-        output = F.relu(output.view(-1, 256)) # (系列長) * 256 に変換
-
-        z_pi = F.softmax(self.dense_decpi(output))
-        z_mean = self.dense_decmean(output).view(-1, self.n_gaussian, self.beta_dim)
-        z_var = self.dense_decvar(output).view(-1, self.n_gaussian, self.beta_dim)
-
-        epsilon = torch.randn(z_mean.shape).to(device)
-
-        print(z_pi.shape())
-        print(torch.sum(z_pi,dim=-1))
-        print(z_mean.shape)
-
-        z_pred = torch.sum(z_pi * (z_mean + z_var * epsilon), dim = 1)
-
-        print(z_pred.shape)
+        hidden_init = None
+        output, (hidden, cell) = self.rnn(beta, hidden_init) # hidden_initは隠れ層Hと記憶層Cの初期値、Noneの場合は零行列となる
+        output = F.relu(output.view(-1, 1000)) # (系列長) * 2000 に変換
+        z_pred = self.dense_dec(output)
 
         return z_pred
 
@@ -615,7 +594,7 @@ class LWMAgent:
                  num_state=81, z_dim=8, m_tokens=2, m_length=10, beta_dim=10, 
                  num_action=4, gamma=0.99, message_prob=0.5, 
                  vae_lr=2e-4, lbn_lr=2e-6, ctrl_lr=4e-4, speaker_lr=5e-5, eps=1e-4, 
-                 lmd_ent=0.02, lmd_v=0.1):
+                 lmd_ent=0.05, lmd_v=0.1):
         super().__init__()
         self.env = env
         self.gamma = gamma  # 割引率
@@ -746,177 +725,86 @@ class LWMAgent:
 """## 4 学習
 """
 
-# 各種設定
-class train():
-    def __init__(self):
-        self.T = 36 # エピソードの最大ステップ数
-        self.env = Environment(grid_type='A') # 環境
-        self.agent = LWMAgent(self.env, self.T) # モデルの定義
-    def __call__(self):
-        num_episode = 200000  # 学習エピソード数
+num_episode = 200000  # 学習エピソード数
+T = 56 # エピソードの最大ステップ数
+env = Environment(grid_type='A') # 環境
+agent = LWMAgent(env, T) # モデルの定義
 
-        # ログ
-        writer = SummaryWriter(log_dir="./logs") # TensorBoardの設定
-        test_interval = 100
-        log_interval = 5000
+# ログ
+writer = SummaryWriter(log_dir="./logs") # TensorBoardの設定
+test_interval = 100
+log_interval = 5000
+success_rate = 0
+test_success_rate = 0
+best_success_rate = 0
+
+for episode in tqdm(range(num_episode)):
+    env.reset()
+    for t in range(T):
+        action, prob, state_value, action_prob = agent.get_action(t, env)  #  行動を選択
+        next_state, reward, done = env.step(action)
+        agent.add_ctrl_memory(reward, prob, action_prob, state_value)
+        #　エピソードが終了、エピソードの最大ステップ数に到達したら
+        if done or t==T-1:
+            if done:
+                success_rate += 1
+            vae_loss, lbn_kl, lbn_reconst, actor_loss, critic_loss, entropy_loss, speaker_negent, speaker_rec = agent.update()
+            agent.reset_memory() # パラメタが更新されているので
+            break
+
+    # テスト 探索ノイズなしでの性能を評価する
+    if (episode + 1) % test_interval == 0:
+        env.reset()
+        for t in range(T):
+            action = agent.get_greedy_action(t, env)  #  行動を選択
+            next_state, reward, done = env.step(action)
+            #　エピソードが終了、エピソードの最大ステップ数に到達したら
+            if done or t==T-1:
+                if done:
+                    test_success_rate += 1
+                agent.reset_memory()
+                break
+        
+    # 記録する
+    writer.add_scalar("t", t, episode+1)
+    writer.add_scalar("vae loss", vae_loss.item(), episode+1)
+    writer.add_scalar("lbn kl", lbn_kl.item(), episode+1)
+    writer.add_scalar("lbn reconst", lbn_reconst.item(), episode+1)
+    writer.add_scalar("actor loss", actor_loss.item(), episode+1)
+    writer.add_scalar("critic loss", critic_loss.item(), episode+1)
+    writer.add_scalar("entropy loss", entropy_loss.item(), episode+1)
+    writer.add_scalar("speaker negent", speaker_negent.item(), episode+1)
+    writer.add_scalar("speaker rec", speaker_rec.item(), episode+1)
+
+    if (episode+1) % log_interval == 0:
+        success_rate /= log_interval
+        test_success_rate /= (log_interval / test_interval)
+
+        writer.add_scalar("success rate", success_rate, episode+1)
+        writer.add_scalar("test success rate", test_success_rate, episode+1)
+
+        print("Episode %d finished | Success rate %f" % (episode+1, success_rate))
+        print("Episode %d finished | Test success rate %f" % (episode+1, test_success_rate))
+
+        # 重みの保存
+        if best_success_rate < test_success_rate:
+            torch.save(agent.vae.state_dict(), './vae_best.pth')
+            torch.save(agent.lbn.state_dict(), './lbn_best.pth')
+            torch.save(agent.controller.state_dict(), './controller_best.pth')
+            torch.save(agent.speaker.state_dict(), './speaker_best.pth')
+            best_success_rate = test_success_rate
+        else:
+            torch.save(agent.vae.state_dict(), './vae_last.pth')
+            torch.save(agent.lbn.state_dict(), './lbn_last.pth')
+            torch.save(agent.controller.state_dict(), './controller_last.pth')
+            torch.save(agent.speaker.state_dict(), './speaker_last.pth')
+            best_success_rate = test_success_rate              
+
         success_rate = 0
         test_success_rate = 0
-        best_success_rate = 0
 
-        for episode in tqdm(range(num_episode)):
-            self.env.reset()
-            for t in range(self.T):
-                action, prob, state_value, action_prob = self.agent.get_action(t, env)  #  行動を選択
-                next_state, reward, done = self.env.step(action)
-                self.agent.add_ctrl_memory(reward, prob, action_prob, state_value)
-                #　エピソードが終了、エピソードの最大ステップ数に到達したら
-                if done or t==self.T-1:
-                    if done:
-                        success_rate += 1
-                    vae_loss, lbn_kl, lbn_reconst, actor_loss, critic_loss, entropy_loss, speaker_negent, speaker_rec = agent.update()
-                    self.agent.reset_memory() # パラメタが更新されているので
-                    break
-
-            # テスト 探索ノイズなしでの性能を評価する
-            if (episode + 1) % test_interval == 0:
-                self.env.reset()
-                for t in range(self.T):
-                    action = self.agent.get_greedy_action(t, self.env)  #  行動を選択
-                    next_state, reward, done = self.env.step(action)
-                    #　エピソードが終了、エピソードの最大ステップ数に到達したら
-                    if done or t==self.T-1:
-                        if done:
-                            test_success_rate += 1
-                        self.agent.reset_memory()
-                        break
-                
-            # 記録する
-            writer.add_scalar("t", t, episode+1)
-            writer.add_scalar("vae loss", vae_loss.item(), episode+1)
-            writer.add_scalar("lbn kl", lbn_kl.item(), episode+1)
-            writer.add_scalar("lbn reconst", lbn_reconst.item(), episode+1)
-            writer.add_scalar("actor loss", actor_loss.item(), episode+1)
-            writer.add_scalar("critic loss", critic_loss.item(), episode+1)
-            writer.add_scalar("entropy loss", entropy_loss.item(), episode+1)
-            writer.add_scalar("speaker negent", speaker_negent.item(), episode+1)
-            writer.add_scalar("speaker rec", speaker_rec.item(), episode+1)
-
-            if (episode+1) % log_interval == 0:
-                success_rate /= log_interval
-                test_success_rate /= (log_interval / test_interval)
-
-                writer.add_scalar("success rate", success_rate, episode+1)
-                writer.add_scalar("test success rate", test_success_rate, episode+1)
-
-                print("Episode %d finished | Success rate %f" % (episode+1, success_rate))
-                print("Episode %d finished | Test success rate %f" % (episode+1, test_success_rate))
-
-                # 重みの保存
-                if best_success_rate < test_success_rate:
-                    torch.save(self.agent.vae.state_dict(), './vae_best.pth')
-                    torch.save(self.agent.lbn.state_dict(), './lbn_best.pth')
-                    torch.save(self.agent.controller.state_dict(), './controller_best.pth')
-                    torch.save(self.agent.speaker.state_dict(), './speaker_best.pth')
-                    best_success_rate = test_success_rate
-                else:
-                    torch.save(self.agent.vae.state_dict(), './vae_last.pth')
-                    torch.save(self.agent.lbn.state_dict(), './lbn_last.pth')
-                    torch.save(self.agent.controller.state_dict(), './controller_last.pth')
-                    torch.save(self.agent.speaker.state_dict(), './speaker_last.pth')
-                    best_success_rate = test_success_rate              
-
-                success_rate = 0
-                test_success_rate = 0
-
-        # writerを閉じる
-        writer.close()
+# writerを閉じる
+writer.close()
 
         # Commented out IPython magic to ensure Python compatibility.
         # %tensorboard --logdir='./logs'
-
-    """## 5 挙動確認
-
-    ### 5-1 VAE-Seq
-    """
-    def vae_exp(self):
-        with torch.no_grad():
-            self.env.reset()
-            x_part = self.env.observation(partial=True)
-            print('input')
-            plt.imshow(x_part)
-            plt.show()
-            x_part = x_part.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device) 
-            _, z = self.agent.vae(x_part)
-            x_img = self.agent.vae._decoder(z).reshape(3, 9, 9).permute(1, 2, 0).cpu().detach().numpy()
-            print('output')
-            plt.imshow(x_img)
-            plt.show()
-            self.agent.reset_memory()
-
-
-    """### 5-2 Speaker"""
-    def speaker_exp(self):
-        with torch.no_grad():
-            fig, ax = plt.subplots(2,6,figsize=(15,5))
-            for i in range(6):
-                self.env.reset()
-                x_glb = self.env.observation(partial=False)
-                ax[0][i].imshow(x_glb)
-                x_glb = x_glb.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device) 
-                m = self.agent.speaker(x_glb)
-                x_re = self.agent.speaker._decoder(m)
-                x_re = x_re.reshape(3, 9, 9).permute(1, 2, 0).cpu().detach().numpy()
-                ax[1][i].imshow(x_re)
-                self.agent.reset_memory()
-            plt.show()
-            self.agent.reset_memory()
-
-    """### 5-3 LBN"""
-    def lbn_exp(self):
-        with torch.no_grad():
-            fig, ax = plt.subplots(1,6,figsize=(12,3))
-
-            slot_lst = []
-            beta_lst = []
-
-            for i in range(2):
-                self.env.reset()
-                x_part = self.env.observation(partial=True)
-                x_glb = self.env.observation(partial=False)
-                ax[i].imshow(x_glb)
-
-                x_glb = x_glb.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device) 
-                m = self.agent.speaker(x_glb)
-                m = m.view(1,20)
-
-                x_part = x_part.permute(2, 0, 1).reshape(-1, 3, 9, 9).to(device)
-                _, z_init = self.agent.vae(x_part)
-
-                for _ in range(1000):
-                    beta = self.agent.lbn(z_init, m, beta=None, t=1).view(-1).detach().cpu().tolist()
-                    beta_lst.append(beta)
-                    slot_lst.append(i)
-            
-            print('input')
-            plt.show()
-                
-            from sklearn.manifold import TSNE
-            beta_lst = TSNE(n_components=2).fit_transform(beta_lst).T
-
-            colors = ['red', 'blue','green','magenta','cyan','yellow']
-            plt.figure(figsize=(8,8))
-            plt.scatter(beta_lst[0], beta_lst[1], s=0.7, c=[colors[t] for t in slot_lst])
-            plt.show()
-
-"""## 6 重みの読み込み"""
-'''
-# モデルの定義
-agent = LWMAgent(env, T, device)
-
-# 保存したモデルパラメータの読み込み
-agent.vae.load_state_dict(torch.load('./lwm_vae.pth'))
-agent.lbn.load_state_dict(torch.load('./lwm_lbn.pth'))
-agent.controller.load_state_dict(torch.load('./lwm_controller.pth'))
-agent.speaker.load_state_dict(torch.load('./lwm_speaker.pth'))
-'''
-

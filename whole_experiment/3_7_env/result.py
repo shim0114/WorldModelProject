@@ -725,7 +725,7 @@ class LWMAgent:
 """## 6 重みの読み込み"""
 
 # モデルの定義
-T=33
+T=29
 env = Environment(grid_type='A')
 agent = LWMAgent(env, T, device)
 
@@ -740,7 +740,7 @@ with torch.no_grad():
     success_rate = 0
     for _ in tqdm(range(num_episode)):
         env.reset()
-        for t in range(33):
+        for t in range(29):
             action = agent.get_greedy_action(t, env)  #  行動を選択
             next_state, reward, done = env.step(action)
             #　エピソードが終了、エピソードの最大ステップ数に到達したら

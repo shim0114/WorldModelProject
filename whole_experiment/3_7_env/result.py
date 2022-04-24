@@ -133,18 +133,18 @@ class Environment():
         # Reset grid
         self.grid = deepcopy(self.init_grid)
         # Decide position of reward cell randomly
-        reward_pos = random.randint(0, 5)
+        reward_pos = random.randint(0, 3)
 
         if self.grid_type=='A':
             # reward cell must be somewhere on one of the corridors
-            reward_x = reward_pos % 3
+            reward_x = reward_pos // 2
             reward_y = reward_pos % 2
             if reward_y == 0:
-                #self.grid[1][reward_x*3+1] = 1
-                self.grid[1][7] = 1
+                self.grid[1][reward_x*4+3] = 1
+                #self.grid[1][7] = 1
             else:
-                #self.grid[-2][reward_x*3+1] = 1
-                self.grid[-2][7] = 1
+                self.grid[-2][reward_x*4+3] = 1
+                #self.grid[-2][7] = 1
 
         elif self.grid_type=='B':
             # reward cell must be somewhere on one of the corridors
